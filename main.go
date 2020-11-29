@@ -18,7 +18,8 @@ import (
 const startGamePattern = "start.*?<@!(?P<target>\\d{18})>$"
 const getGamePattern = "get.*?<@!(?P<target>\\d{18})>$"
 const movePattern = "move.*?<@!(?P<target>\\d{18})>*.?([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) ([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1])$"
-const resginPattern = "resgin.*?<@!(?P<target>\\d{18})>$"
+const resginPattern = "resign.*?<@!(?P<target>\\d{18})>$"
+const codeInfoPattern = "code.*?info$"
 
 var (
 	commandSet  *discom.CommandSet
@@ -33,8 +34,16 @@ func init() {
 	commandSet = discom.CreateCommandSet(false, regexp.MustCompile("cb"))
 
 	err := commandSet.AddCommand(discom.Command{
-		Re: regexp.MustCompile(startGamePattern), Handler: startGameCmd,
-		Description: "start game",
+		Re: regexp.MustCompile(startGamePattern), Handler: codeInfoCmd,
+		Description: "prints the code info",
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	err = commandSet.AddCommand(discom.Command{
+		Re: regexp.MustCompile(codeInfoPattern), Handler: startGameCmd,
+		Description: "start game with the target player (you can only have a single game going with a player per server)",
 	})
 	if err != nil {
 		panic(err)
@@ -50,7 +59,7 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(movePattern), Handler: moveCmd,
-		Description: "move a piece in a game",
+		Description: "move a piece in a target game",
 	})
 	if err != nil {
 		panic(err)
@@ -58,7 +67,7 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(resginPattern), Handler: resginCmd,
-		Description: "resgin from a game",
+		Description: "resign from a target game",
 	})
 	if err != nil {
 		panic(err)
@@ -75,6 +84,15 @@ func sendGame(s *discordgo.Session, channelID, msg string, game *chess.Game) {
 				Reader: game.CreateImage(),
 			}},
 		},
+	)
+}
+
+func codeInfoCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
+	s.ChannelMessageSend(
+		m.ChannelID,
+		fmt.Sprintf(
+			"<@!%s>: You can go here to see the source code and make contributions here https://github.com/sardap/chessbot", m.Author.ID,
+		),
 	)
 }
 
