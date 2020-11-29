@@ -34,7 +34,7 @@ func init() {
 	commandSet = discom.CreateCommandSet(false, regexp.MustCompile("cb"))
 
 	err := commandSet.AddCommand(discom.Command{
-		Re: regexp.MustCompile(startGamePattern), Handler: codeInfoCmd,
+		Re: regexp.MustCompile(codeInfoPattern), Handler: codeInfoCmd,
 		Description: "prints the code info",
 	})
 	if err != nil {
@@ -42,7 +42,7 @@ func init() {
 	}
 
 	err = commandSet.AddCommand(discom.Command{
-		Re: regexp.MustCompile(codeInfoPattern), Handler: startGameCmd,
+		Re: regexp.MustCompile(startGamePattern), Handler: startGameCmd,
 		Description: "start game with the target player (you can only have a single game going with a player per server)",
 	})
 	if err != nil {
