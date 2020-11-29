@@ -1,0 +1,22 @@
+version: '3'
+
+services:
+  redis:
+    image: 'docker.io/bitnami/redis:6.0-debian-10'
+    environment:
+      # ALLOW_EMPTY_PASSWORD is recommended only for development.
+      - REDIS_DISABLE_COMMANDS=FLUSHDB,FLUSHALL
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - '6379:6379'
+    volumes:
+      - ./data:/bitnami/redis/data
+  
+  bot:
+    build: .
+    environment:
+      - DISCORD_AUTH=${DISCORD_AUTH}
+      - IMG_QUALITY=5
+      - REDIS_HOST=140.140.140.30:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB=1
