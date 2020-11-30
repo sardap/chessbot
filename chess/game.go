@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/color/palette"
 	"image/draw"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/sardap/chessbot/env"
@@ -184,6 +187,13 @@ type Postion struct {
 	Row int `json:"r"`
 }
 
+func (p *Postion) String() string {
+	return fmt.Sprintf(
+		"%s%d",
+		string(p.Row+int('A')), 8-p.Col,
+	)
+}
+
 //Move Move
 type Move struct {
 	From Postion `json:"from"`
@@ -221,8 +231,7 @@ func (g *Game) ProcessMoves() {
 	}
 }
 
-//CreateImage CreateImage
-func (g *Game) CreateImage() io.Reader {
+func (g *Game) createImgRaw() image.Image {
 	b := board.Bounds()
 	snapshot := image.NewRGBA(b)
 	draw.Draw(snapshot, b, board, image.ZP, draw.Src)
@@ -239,10 +248,93 @@ func (g *Game) CreateImage() io.Reader {
 		}
 	}
 
+	return snapshot
+}
+
+//CreateImage CreateImage
+func (g *Game) CreateImage() io.Reader {
+	snapshot := g.createImgRaw()
 	result := &bytes.Buffer{}
 
 	jpeg.Encode(result, snapshot, &jpeg.Options{Quality: env.ImgQuality})
 	return result
+}
+
+//CreateGif Creates a jif of all the moves
+func (g *Game) CreateGif() io.Reader {
+	//Reset board
+	g.board = emptyBoard
+
+	var tmpMoves []Move
+	//Append empty move so start board state is shown
+	tmpMoves = append(tmpMoves, Move{})
+	tmpMoves = append(tmpMoves, g.Moves...)
+
+	snapshots := make([]*image.Paletted, len(tmpMoves))
+	var delays []int
+
+	type snapshot struct {
+		img *image.Paletted
+		idx int
+	}
+
+	piCh := make(chan snapshot, len(tmpMoves)-1)
+
+	for i, move := range tmpMoves {
+		g.processMove(move)
+
+		simage := g.createImgRaw()
+
+		go func(simage image.Image, idx int, ch chan snapshot) {
+			bounds := simage.Bounds()
+			palettedImage := image.NewPaletted(bounds, palette.Plan9)
+			draw.Draw(palettedImage, palettedImage.Rect, simage, bounds.Min, draw.Over)
+			ch <- snapshot{palettedImage, idx}
+		}(simage, i, piCh)
+	}
+
+	complete := false
+	for !complete {
+		top := <-piCh
+		snapshots[top.idx] = top.img
+		delays = append(delays, 100)
+		//Bad
+		complete = true
+		for _, val := range snapshots {
+			if val == nil {
+				complete = false
+				break
+			}
+		}
+	}
+
+	result := &bytes.Buffer{}
+
+	anim := gif.GIF{Delay: delays, Image: snapshots}
+
+	gif.EncodeAll(result, &anim)
+
+	return result
+}
+
+//MovesAtomicNotation returns moves in atomic notation
+func (g *Game) MovesAtomicNotation() string {
+	var result strings.Builder
+
+	currentTurn := SideWhite
+	for i, mv := range g.Moves {
+		fmt.Fprintf(&result, "%s %s: %s ", mv.From.String(), mv.To.String(), currentTurn.String())
+		if i != 0 && i%3 == 0 {
+			fmt.Fprintf(&result, "\n")
+		}
+		if currentTurn == SideWhite {
+			currentTurn = SideBlack
+		} else {
+			currentTurn = SideWhite
+		}
+	}
+
+	return result.String()
 }
 
 //GetPlayer GetPlayer
@@ -299,6 +391,19 @@ func (g *Game) ValidMove(id string, mv Move) bool {
 	}
 
 	return true
+}
+
+//FindEmptySqaure This is used for one hell of  a hack
+func (g *Game) FindEmptySqaure() Postion {
+	for i := range g.board {
+		for j := range g.board[i] {
+			if g.board[i][j].Kind == PieceTypeEmpty {
+				return Postion{i, j}
+			}
+		}
+	}
+
+	return Postion{0, 0}
 }
 
 //MakeMove move

@@ -39,7 +39,10 @@ func (i *Instance) Connect() {
 
 //DeleteGame Deletes a game from the DB
 func (i *Instance) DeleteGame(g *chess.Game) error {
-	return i.db.Del(context.TODO(), g.ID()).Err()
+	return i.db.Del(
+		context.TODO(),
+		fmt.Sprintf("active_%s", g.ID()),
+	).Err()
 }
 
 //SaveGame saves a game under the active section of the DB
