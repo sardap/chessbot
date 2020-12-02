@@ -8,14 +8,13 @@ import (
 	"image/color/palette"
 	"image/draw"
 	"image/gif"
-	"image/jpeg"
 	"image/png"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
-	"github.com/sardap/chessbot/env"
 )
 
 const (
@@ -196,8 +195,9 @@ func (p *Postion) String() string {
 
 //Move Move
 type Move struct {
-	From Postion `json:"from"`
-	To   Postion `json:"to"`
+	From      Postion   `json:"from"`
+	To        Postion   `json:"to"`
+	Promotion PieceType `json:"promo"`
 }
 
 //Game a chess game
@@ -211,15 +211,28 @@ type Game struct {
 	Winner  SideType `json:"win"`
 }
 
+//GameID Create game id
+func GameID(guild, id1, id2 string) string {
+	ary := []string{id1, id2}
+	sort.Strings(ary)
+	return fmt.Sprintf("%s_%s_%s", guild, ary[0], ary[1])
+}
+
 //ID id
 func (g *Game) ID() string {
-	return fmt.Sprintf("%s_%s_%s", g.GuildID, g.White.ID, g.Black.ID)
+	return GameID(g.GuildID, g.White.ID, g.Black.ID)
 }
 
 func (g *Game) processMove(move Move) {
 	tmp := g.board[move.From.Col][move.From.Row]
 	g.board[move.From.Col][move.From.Row] = Piece{PieceTypeEmpty, SideEmpty}
 	g.board[move.To.Col][move.To.Row] = tmp
+	//Apply promotion
+	if move.Promotion != PieceTypeEmpty {
+		g.board[move.To.Col][move.To.Row] = Piece{
+			move.Promotion, g.board[move.To.Col][move.To.Row].Side,
+		}
+	}
 }
 
 //ProcessMoves process moves
@@ -256,7 +269,7 @@ func (g *Game) CreateImage() io.Reader {
 	snapshot := g.createImgRaw()
 	result := &bytes.Buffer{}
 
-	jpeg.Encode(result, snapshot, &jpeg.Options{Quality: env.ImgQuality})
+	png.Encode(result, snapshot)
 	return result
 }
 

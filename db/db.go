@@ -41,7 +41,7 @@ func (i *Instance) Connect() {
 func (i *Instance) DeleteGame(g *chess.Game) error {
 	return i.db.Del(
 		context.TODO(),
-		fmt.Sprintf("active_%s", g.ID()),
+		g.ID(),
 	).Err()
 }
 
@@ -53,22 +53,18 @@ func (i *Instance) SaveGame(g *chess.Game) error {
 	}
 
 	return i.db.Set(
-		context.TODO(), fmt.Sprintf("active_%s", g.ID()), bytes,
+		context.TODO(), g.ID(), bytes,
 		time.Duration(24)*time.Hour,
 	).Err()
 }
 
 //GetGame gets a game from the DB
-func (i *Instance) GetGame(white, black, guild string) (*chess.Game, error) {
-	id := fmt.Sprintf("active_%s_%s_%s", guild, white, black)
+func (i *Instance) GetGame(id string) (*chess.Game, error) {
+	ctx := context.TODO()
 
-	res := i.db.Get(context.TODO(), id)
+	res := i.db.Get(ctx, id)
 	if res.Err() != nil {
-		id = fmt.Sprintf("active_%s_%s_%s", guild, black, white)
-		res = i.db.Get(context.TODO(), id)
-		if res.Err() != nil {
-			return nil, res.Err()
-		}
+		return nil, res.Err()
 	}
 
 	var result chess.Game
