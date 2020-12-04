@@ -23,8 +23,8 @@ const (
 )
 
 var (
-	images     map[PieceType]map[SideType]image.Image = make(map[PieceType]map[SideType]image.Image)
-	board      image.Image
+	images     map[PieceType]image.Image = make(map[PieceType]image.Image)
+	boardImg   image.Image
 	emptyBoard [rowHight][rowWidth]Piece
 	green      = color.RGBA{0, 255, 0, 255}
 	purple     = color.RGBA{255, 0, 255, 255}
@@ -32,13 +32,8 @@ var (
 
 func init() {
 	// Loads assets
-	board = changeColor(
-		loadImage("assets/chess_board.png"),
-		map[color.Color]color.Color{
-			green:  color.RGBA{253, 209, 138, 255},
-			purple: color.RGBA{137, 57, 34, 255},
-		},
-	)
+	boardImg = loadImage("assets/chess_board.png")
+
 	images[PieceTypePawn] = loadPieceImg("pawn")
 	images[PieceTypeKnight] = loadPieceImg("knight")
 	images[PieceTypeBishop] = loadPieceImg("bishop")
@@ -102,23 +97,8 @@ func changeColor(src image.Image, target map[color.Color]color.Color) image.Imag
 	return m
 }
 
-func loadPieceImg(name string) map[SideType]image.Image {
-	result := make(map[SideType]image.Image)
-	result[SideWhite] = changeColor(
-		loadImage(fmt.Sprintf("assets/%s.png", name)),
-		map[color.Color]color.Color{
-			green:  color.RGBA{255, 255, 255, 255},
-			purple: color.RGBA{0, 0, 0, 255},
-		},
-	)
-	result[SideBlack] = changeColor(
-		loadImage(fmt.Sprintf("assets/%s.png", name)),
-		map[color.Color]color.Color{
-			green:  color.RGBA{0, 0, 0, 255},
-			purple: color.RGBA{255, 255, 255, 255},
-		},
-	)
-	return result
+func loadPieceImg(name string) image.Image {
+	return loadImage(fmt.Sprintf("assets/%s.png", name))
 }
 
 //PieceType PieceType
@@ -171,25 +151,26 @@ type Piece struct {
 }
 
 func (p *Piece) getImage() image.Image {
-	return images[p.Kind][p.Side]
+	return images[p.Kind]
 }
 
 //Player player
 type Player struct {
-	ID   string   `json:"id"`
-	Side SideType `json:"side"`
+	ID    string     `json:"id"`
+	Side  SideType   `json:"side"`
+	Color color.RGBA `json:"color"`
 }
 
 //Postion Postion
 type Postion struct {
-	Col int `json:"c"`
-	Row int `json:"r"`
+	Y int `json:"c"`
+	X int `json:"r"`
 }
 
 func (p *Postion) String() string {
 	return fmt.Sprintf(
 		"%s%d",
-		string(p.Row+int('A')), 8-p.Col,
+		string(p.X+int('A')), 8-p.Y,
 	)
 }
 
@@ -202,13 +183,15 @@ type Move struct {
 
 //Game a chess game
 type Game struct {
-	board   [rowHight][rowWidth]Piece
-	Moves   []Move   `json:"moves"`
-	White   Player   `json:"white"`
-	Black   Player   `json:"black"`
-	GuildID string   `json:"gid"`
-	Turn    SideType `json:"turn"`
-	Winner  SideType `json:"win"`
+	board           [rowHight][rowWidth]Piece
+	Moves           []Move     `json:"moves"`
+	White           Player     `json:"white"`
+	Black           Player     `json:"black"`
+	GuildID         string     `json:"gid"`
+	Turn            SideType   `json:"turn"`
+	Winner          SideType   `json:"win"`
+	BoardColorWhite color.RGBA `json:"board_color_white"`
+	BoardColorBlack color.RGBA `json:"board_color_black"`
 }
 
 //GameID Create game id
@@ -224,13 +207,13 @@ func (g *Game) ID() string {
 }
 
 func (g *Game) processMove(move Move) {
-	tmp := g.board[move.From.Col][move.From.Row]
-	g.board[move.From.Col][move.From.Row] = Piece{PieceTypeEmpty, SideEmpty}
-	g.board[move.To.Col][move.To.Row] = tmp
+	tmp := g.board[move.From.Y][move.From.X]
+	g.board[move.From.Y][move.From.X] = Piece{PieceTypeEmpty, SideEmpty}
+	g.board[move.To.Y][move.To.X] = tmp
 	//Apply promotion
 	if move.Promotion != PieceTypeEmpty {
-		g.board[move.To.Col][move.To.Row] = Piece{
-			move.Promotion, g.board[move.To.Col][move.To.Row].Side,
+		g.board[move.To.Y][move.To.X] = Piece{
+			move.Promotion, g.board[move.To.Y][move.To.X].Side,
 		}
 	}
 }
@@ -245,9 +228,27 @@ func (g *Game) ProcessMoves() {
 }
 
 func (g *Game) createImgRaw() image.Image {
-	b := board.Bounds()
+	boardImgColored := changeColor(
+		boardImg,
+		map[color.Color]color.Color{
+			green:  color.RGBA{253, 209, 138, 255},
+			purple: color.RGBA{137, 57, 34, 255},
+		},
+	)
+
+	b := boardImgColored.Bounds()
 	snapshot := image.NewRGBA(b)
-	draw.Draw(snapshot, b, board, image.ZP, draw.Src)
+	draw.Draw(snapshot, b, boardImgColored, image.ZP, draw.Src)
+
+	whiteColor := map[color.Color]color.Color{
+		green:  g.White.Color,
+		purple: g.Black.Color,
+	}
+
+	blackColor := map[color.Color]color.Color{
+		green:  g.Black.Color,
+		purple: g.White.Color,
+	}
 
 	for i := range g.board {
 		for j, piece := range g.board[i] {
@@ -255,8 +256,15 @@ func (g *Game) createImgRaw() image.Image {
 				continue
 			}
 
+			var pal map[color.Color]color.Color
+			if piece.Side == SideWhite {
+				pal = whiteColor
+			} else {
+				pal = blackColor
+			}
+
+			img := changeColor(piece.getImage(), pal)
 			offset := image.Pt(84+j*126, 84+i*126)
-			img := piece.getImage()
 			draw.Draw(snapshot, img.Bounds().Add(offset), img, image.ZP, draw.Over)
 		}
 	}
@@ -366,44 +374,40 @@ func (g *Game) GetOpponent(id string) Player {
 	return g.Black
 }
 
-//ValidMove move
-func (g *Game) ValidMove(id string, mv Move) bool {
-	piece := g.board[mv.From.Col][mv.From.Row]
-	if piece.Side != g.GetPlayer(id).Side {
-		return false
+func (g *Game) getAt(pos Postion) Piece {
+	return g.board[pos.Y][pos.X]
+}
+
+func (g *Game) diagonalMove(mv Move) bool {
+	return mv.To.X != mv.From.X && mv.To.Y != mv.From.Y
+}
+
+func (g *Game) validPawnMove(mv Move) error {
+
+	if mv.From.X != mv.To.X {
+		return errors.New("cannot move the other players pieces")
 	}
 
+	return nil
+}
+
+//ValidMove move
+func (g *Game) ValidMove(id string, mv Move) error {
 	if g.GetPlayer(id).Side != g.Turn {
-		return false
+		return errors.New("cannot move on enemies turn")
+	}
+
+	piece := g.board[mv.From.Y][mv.From.X]
+	if piece.Side != g.GetPlayer(id).Side {
+		return errors.New("cannot move the other players pieces")
 	}
 
 	switch piece.Kind {
 	case PieceTypePawn:
-		return true
-		// if mv.From.Row != mv.To.Row {
-		// 	return false
-		// }
-
-		// if piece.Side == SideWhite {
-		// 	if mv.From.Col == rowHight-2 && mv.To.Col == mv.From.Col-2 {
-		// 		return true
-		// 	}
-
-		// 	if mv.To.Col == mv.From.Col-1 {
-		// 		return true
-		// 	}
-		// } else {
-		// 	if mv.From.Col == 1 && mv.To.Col == mv.From.Col+2 {
-		// 		return true
-		// 	}
-
-		// 	if mv.To.Col == mv.From.Col+1 {
-		// 		return true
-		// 	}
-		// }
+		return nil
 	}
 
-	return true
+	return nil
 }
 
 //FindEmptySqaure This is used for one hell of  a hack
@@ -435,12 +439,12 @@ func (g *Game) MakeMove(mv Move) {
 func StringToPostion(from string) Postion {
 	letter := from[0]
 	number := from[1]
-	y := int(letter - 'A')
+	y := int(letter - 'a')
 	x := int(number - '0')
 
 	return Postion{
-		Col: 8 - x,
-		Row: y,
+		Y: 8 - x,
+		X: y,
 	}
 }
 
@@ -453,12 +457,22 @@ func changeRowSide(row [rowWidth]Piece, side SideType) [rowWidth]Piece {
 }
 
 //CreateGame CreateGame
-func CreateGame(white, black, guildID string) Game {
+func CreateGame(white, black, guildID string, whiteColor, BlackColor color.RGBA) Game {
 	result := Game{
-		White:   Player{ID: white, Side: SideWhite},
-		Black:   Player{ID: black, Side: SideBlack},
-		GuildID: guildID,
-		Turn:    SideWhite,
+		White: Player{
+			ID:    white,
+			Side:  SideWhite,
+			Color: whiteColor,
+		},
+		Black: Player{
+			ID:    black,
+			Side:  SideBlack,
+			Color: BlackColor,
+		},
+		GuildID:         guildID,
+		Turn:            SideWhite,
+		BoardColorBlack: color.RGBA{0, 0, 0, 255},
+		BoardColorWhite: color.RGBA{255, 255, 255, 255},
 	}
 
 	result.ProcessMoves()

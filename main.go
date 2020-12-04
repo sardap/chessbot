@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"log"
+	"math/rand"
 	"os"
 	"os/signal"
 	"regexp"
@@ -10,41 +12,44 @@ import (
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/icza/gox/imagex/colorx"
 	"github.com/sardap/chessbot/chess"
 	"github.com/sardap/chessbot/db"
 	"github.com/sardap/discom"
 )
 
-const startGamePattern = "start <@!(?P<target>\\d{18})> ?$"
-const getGamePattern = "get <@!(?P<target>\\d{18})> ?$"
-const getMovesPattern = "get moves <@!(?P<target>\\d{18})> ?$"
-const movePattern = "move <@!(?P<target>\\d{18})> .*?([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) .*?([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) ?$"
-const promotionPattern = "move promotion <@!(?P<target>\\d{18})> .*?([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) .*?([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) (rook|knight|queen|bishop) ?$"
-const castlingPattern = "castling <@!(?P<target>\\d{18})> ([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) ([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) ([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) ([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) ?$"
-const enPassantPattern = "en passant <@!(?P<target>\\d{18})> ([A|B|C|D|E|F|G|H][8|7|6|5|4|3|2|1]) ?$"
-const resginPattern = "(resign|resgin) <@!(?P<target>\\d{18})> ?$"
-const codeInfoPattern = "code info$"
 const infoPattern = "info$"
+const codeInfoPattern = "code info$"
+const startGamePattern = "<@!(?P<target>\\d{18})> .*?start ?((?P<white_color>#[0-9a-f]{6}) ?(?P<black_color>#[0-9a-f]{6}))? ?$"
+const getGamePattern = "<@!(?P<target>\\d{18})> .*?get$"
+const getMovesPattern = "<@!(?P<target>\\d{18})> .*?get .*?moves?$"
+const movePattern = "<@!(?P<target>\\d{18})> .*?move .*?([a-h][1-8]) .*?([a-h][1-8]) ?$"
+const castlingPattern = "<@!(?P<target>\\d{18})> .*?castling .*?([a-h][1-8]) .*?([a-h][1-8]) ([a-h][1-8]) ([a-h][1-8]) ?$"
+const enPassantPattern = "<@!(?P<target>\\d{18})> .*?en .*?passant .*?([a-h][1-8]) ?$"
+const promotionPattern = "<@!(?P<target>\\d{18})> .*?move .*?promotion .*?([a-h][1-8]) .*?([a-h][1-8]) (rook|knight|queen|bishop) ?$"
+const resginPattern = "<@!(?P<target>\\d{18})> .*?(resign|resgin)$"
 
 var (
 	commandSet  *discom.CommandSet
 	startGameRe = regexp.MustCompile(startGamePattern)
 	getGameRe   = regexp.MustCompile(getGamePattern)
+	getMovesRe  = regexp.MustCompile(getMovesPattern)
 	moveRe      = regexp.MustCompile(movePattern)
-	resginRe    = regexp.MustCompile(resginPattern)
 	castlingRe  = regexp.MustCompile(castlingPattern)
 	enPassantRe = regexp.MustCompile(enPassantPattern)
-	getMovesRe  = regexp.MustCompile(getMovesPattern)
 	promotionRe = regexp.MustCompile(promotionPattern)
+	resginRe    = regexp.MustCompile(resginPattern)
 	dbIns       *db.Instance
 )
 
 func init() {
-	commandSet = discom.CreateCommandSet(false, regexp.MustCompile("cb"))
+	commandSet = discom.CreateCommandSet(regexp.MustCompile("\\$cb"))
 
 	err := commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(infoPattern), Handler: infoCmd,
-		Description: "prints more info about how the bot works",
+		Example:     "info",
+		Description: "Prints more info about how the bot works",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -52,7 +57,8 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(codeInfoPattern), Handler: codeInfoCmd,
-		Description: "prints the code info",
+		Example: "code info", Description: "Prints the code info",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -60,7 +66,9 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(startGamePattern), Handler: startGameCmd,
-		Description: "start game with the target player (you can only have a single game going with a player per server)",
+		Example:     "@TARGET_PLAYER start",
+		Description: "Start game with the target player (you can only have a single game going with a player per server)",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -68,7 +76,9 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(getGamePattern), Handler: getGameCmd,
-		Description: "get game a target game",
+		Example:     "@TARGET_PLAYER get",
+		Description: "View curent state of board for game",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -76,7 +86,9 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(getMovesPattern), Handler: getMovesCmd,
-		Description: "prints a move list and creates a gif of all moves so far",
+		Example:     "@TARGET_PLAYER get moves",
+		Description: "Prints a move list and creates a gif of all moves so far",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -84,7 +96,9 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(movePattern), Handler: moveCmd,
-		Description: "move a piece in a target game it goes `cb move @player FROM TO`",
+		Example:     "@TARGET_PLAYER move F2 F4",
+		Description: "Move a piece in a target game it uses the letters and numbers grid thing",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -92,7 +106,9 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(castlingPattern), Handler: castlingCmd,
-		Description: "perform a castling action it goes `cb move @player FROM TO FROM TO` REMEMBER THIS HAS NO RULE CHECKING",
+		Example:     "@TARGET_PLAYER castling A1 D1 D1 A1",
+		Description: "Perform a castling action it goes REMEMBER THIS HAS NO RULE CHECKING",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -100,7 +116,9 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(enPassantPattern), Handler: enPassantCmd,
-		Description: "perform a En Passant action it goes `cb en passant @player TARGET` this will remove the piece that was En Passanted",
+		Example:     "@TARGET_PLAYER en passant A1 A2",
+		Description: "Perform a En Passant action it goes this will remove the piece that was En Passanted NOT MOVE it",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -108,7 +126,9 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(promotionPattern), Handler: movePromotionCmd,
-		Description: "perform a pawn promotion",
+		Example:     "@TARGET_PLAYER move promotion A1 A2 rook",
+		Description: "Perform a pawn promotion valid values are rook, knight, queen, bishop",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -116,7 +136,8 @@ func init() {
 
 	err = commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(resginPattern), Handler: resginCmd,
-		Description: "resign from a target game",
+		Example: "@TARGET_PLAYER resgin", Description: "Resign from a target game",
+		CaseInSense: true,
 	})
 	if err != nil {
 		panic(err)
@@ -185,7 +206,25 @@ func startGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	}
 
-	game := chess.CreateGame(m.Author.ID, target, m.GuildID)
+	var white, black string
+	if rand.Float32() > 0.5 {
+		white = m.Author.ID
+		black = target
+	} else {
+		black = m.Author.ID
+		white = target
+	}
+
+	var whiteColor, blackColor color.RGBA
+	if matches[0][3] != "" {
+		whiteColor, _ = colorx.ParseHexColor(matches[0][3])
+		blackColor, _ = colorx.ParseHexColor(matches[0][4])
+	} else {
+		whiteColor = color.RGBA{255, 255, 255, 255}
+		blackColor = color.RGBA{0, 0, 0, 255}
+	}
+
+	game := chess.CreateGame(white, black, m.GuildID, whiteColor, blackColor)
 	dbIns.SaveGame(&game)
 
 	msg := fmt.Sprintf(
@@ -206,6 +245,10 @@ func getGame(m *discordgo.MessageCreate, target string) (*chess.Game, error) {
 	return dbIns.GetGame(chess.GameID(m.GuildID, m.Author.ID, target))
 }
 
+func rgbaToString(color color.RGBA) string {
+	return fmt.Sprintf("#%x%x%x", color.R, color.G, color.G)
+}
+
 func getGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	matches := getGameRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
 
@@ -218,8 +261,10 @@ func getGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	msg := fmt.Sprintf(
-		"Match between <@!%s>: %s and <@!%s>: %s",
+		"Match between <@!%s>: %s and <@!%s>: %s\n"+
+			"White Color: %s Black Color: %s",
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
+		rgbaToString(game.White.Color), rgbaToString(game.Black.Color),
 	)
 	sendGame(s, m.ChannelID, msg, game)
 }
@@ -253,7 +298,7 @@ func getMovesCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := moveRe.FindAllStringSubmatch(m.Content, -1)
+	matches := moveRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
 
 	if matches == nil {
 		s.ChannelMessageSend(
@@ -281,12 +326,12 @@ func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		To:   chess.StringToPostion(to),
 	}
 
-	if !game.ValidMove(m.Author.ID, mv) {
+	if err := game.ValidMove(m.Author.ID, mv); err != nil {
 		s.ChannelMessageSend(
 			m.ChannelID,
 			fmt.Sprintf(
-				"<@!%s> Invalid Move",
-				m.Author.ID,
+				"<@!%s> Invalid Move %s",
+				m.Author.ID, err,
 			),
 		)
 		return
@@ -303,8 +348,66 @@ func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	sendGame(s, m.ChannelID, msg, game)
 }
 
+func castlingCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
+	matches := castlingRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
+
+	if matches == nil {
+		s.ChannelMessageSend(
+			m.ChannelID,
+			fmt.Sprintf(
+				"<@!%s> Invalid castling move try using uppercase",
+				m.Author.ID,
+			),
+		)
+		return
+	}
+
+	target := matches[0][1]
+	aFrom := matches[0][2]
+	aTo := matches[0][3]
+
+	bFrom := matches[0][4]
+	bTo := matches[0][5]
+
+	game, err := getGame(m, target)
+	if err != nil {
+		printMissingGame(s, m)
+		return
+	}
+
+	if game.Turn != game.GetPlayer(m.Author.ID).Side {
+		s.ChannelMessageSend(
+			m.ChannelID,
+			fmt.Sprintf(
+				"<@!%s> Invalid castling move it's not your turn",
+				m.Author.ID,
+			),
+		)
+		return
+	}
+
+	game.MakeMove(chess.Move{
+		From: chess.StringToPostion(aFrom),
+		To:   chess.StringToPostion(aTo),
+	})
+	game.MakeMove(chess.Move{
+		From: chess.StringToPostion(bFrom),
+		To:   chess.StringToPostion(bTo),
+	})
+
+	game.Turn = game.GetOpponent(m.Author.ID).Side
+
+	dbIns.SaveGame(game)
+
+	msg := fmt.Sprintf(
+		"Match between <@!%s>: %s and <@!%s>: %s castling move",
+		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
+	)
+	sendGame(s, m.ChannelID, msg, game)
+}
+
 func enPassantCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := enPassantRe.FindAllStringSubmatch(m.Content, -1)
+	matches := enPassantRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
 
 	if matches == nil {
 		s.ChannelMessageSend(
@@ -343,7 +446,7 @@ func enPassantCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func movePromotionCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := promotionRe.FindAllStringSubmatch(m.Content, -1)
+	matches := promotionRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
 
 	if matches == nil {
 		s.ChannelMessageSend(
@@ -408,68 +511,10 @@ func movePromotionCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 }
 
-func castlingCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := castlingRe.FindAllStringSubmatch(m.Content, -1)
-
-	if matches == nil {
-		s.ChannelMessageSend(
-			m.ChannelID,
-			fmt.Sprintf(
-				"<@!%s> Invalid castling move try using uppercase",
-				m.Author.ID,
-			),
-		)
-		return
-	}
-
-	target := matches[0][1]
-	aFrom := matches[0][2]
-	aTo := matches[0][3]
-
-	bFrom := matches[0][4]
-	bTo := matches[0][5]
-
-	game, err := getGame(m, target)
-	if err != nil {
-		printMissingGame(s, m)
-		return
-	}
-
-	if game.Turn != game.GetPlayer(m.Author.ID).Side {
-		s.ChannelMessageSend(
-			m.ChannelID,
-			fmt.Sprintf(
-				"<@!%s> Invalid castling move it's not your turn",
-				m.Author.ID,
-			),
-		)
-		return
-	}
-
-	game.MakeMove(chess.Move{
-		From: chess.StringToPostion(aFrom),
-		To:   chess.StringToPostion(aTo),
-	})
-	game.MakeMove(chess.Move{
-		From: chess.StringToPostion(bFrom),
-		To:   chess.StringToPostion(bTo),
-	})
-
-	game.Turn = game.GetOpponent(m.Author.ID).Side
-
-	dbIns.SaveGame(game)
-
-	msg := fmt.Sprintf(
-		"Match between <@!%s>: %s and <@!%s>: %s castling move",
-		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
-	)
-	sendGame(s, m.ChannelID, msg, game)
-}
-
 func resginCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	matches := resginRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
 
-	target := matches[0][2]
+	target := matches[0][1]
 
 	game, err := getGame(m, target)
 	if err != nil {
@@ -532,7 +577,7 @@ func main() {
 		return
 	}
 
-	discord.UpdateStatus(-1, "\"cb help\"")
+	discord.UpdateStatus(-1, "\"$cb help\"")
 
 	// Wait here until CTRL-C or other term signal is received.
 	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
