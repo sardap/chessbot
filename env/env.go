@@ -1,6 +1,7 @@
 package env
 
 import (
+	"fmt"
 	"image/jpeg"
 	"os"
 	"strconv"
@@ -41,4 +42,5 @@ func init() {
 	}
 
 	CmdPrefix = os.Getenv("CMD_PREFIX")
+	fmt.Printf("%s\n", CmdPrefix)
 }

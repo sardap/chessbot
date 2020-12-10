@@ -153,6 +153,26 @@ func (p PieceType) String() string {
 	}
 }
 
+//NotationStr returns algerbaric notation symbol for piece
+func (p PieceType) NotationStr() string {
+	switch p {
+	case PieceTypePawn:
+		return "P"
+	case PieceTypeKnight:
+		return "K"
+	case PieceTypeBishop:
+		return "B"
+	case PieceTypeRook:
+		return "R"
+	case PieceTypeQueen:
+		return "Q"
+	case PieceTypeKing:
+		return "K"
+	default:
+		return "ERROR"
+	}
+}
+
 //SideType SideType
 type SideType int
 
@@ -215,6 +235,14 @@ func (p *Postion) String() string {
 		"%s%d",
 		string(p.Col+int('A')), 8-p.Row,
 	)
+}
+
+func colStr(c int) string {
+	return fmt.Sprintf("%s", c+int('A'))
+}
+
+func rankStr(r int) string {
+	return fmt.Sprintf("%d", 8-r)
 }
 
 //Move Move
@@ -381,13 +409,44 @@ func (g *Game) CreateGif() io.Reader {
 	return result
 }
 
-//MovesAtomicNotation returns moves in atomic notation
-func (g *Game) MovesAtomicNotation() string {
+//AlgebraicNotation returns moves in atomic notation
+func (g *Game) AlgebraicNotation() string {
 	var result strings.Builder
+
+	g.board = emptyBoard
 
 	currentTurn := SideWhite
 	for i, mv := range g.Moves {
-		fmt.Fprintf(&result, "%s %s: %s ", mv.From.String(), mv.To.String(), currentTurn.String())
+		take := ""
+		if g.getAt(mv.To).Kind != PieceTypeEmpty {
+			take = "x"
+		}
+
+		postion := strings.ToLower(mv.To.String())
+
+		moving := g.getAt(mv.From)
+		pieces := g.findPieces(g.Turn, moving.Kind)
+		//Checks if another piece of the same type can also make the move
+		disambiguating := ""
+		for _, val := range pieces {
+			err := moves[g.getAt(val).Kind](g, Move{
+				From: val, To: mv.To,
+			})
+			if err == nil {
+				if val.Col == mv.From.Col && val.Row == mv.From.Row {
+					disambiguating = fmt.Sprintf("%s", strings.ToLower(mv.From.String()))
+				} else if val.Col == mv.From.Col {
+					disambiguating = fmt.Sprintf("%s", rankStr(val.Row))
+				} else if val.Row == mv.From.Row {
+					disambiguating = fmt.Sprintf("%s", colStr(val.Col))
+				}
+			}
+		}
+
+		fmt.Fprintf(
+			&result, "%s%s%s%s",
+			moving.Kind.NotationStr(), disambiguating, take, postion,
+		)
 		if i != 0 && i%3 == 0 {
 			fmt.Fprintf(&result, "\n")
 		}
@@ -396,6 +455,7 @@ func (g *Game) MovesAtomicNotation() string {
 		} else {
 			currentTurn = SideWhite
 		}
+		g.processMove(mv)
 	}
 
 	return result.String()
@@ -576,15 +636,16 @@ func validKingMove(g *Game, mv Move) error {
 	return nil
 }
 
-func (g *Game) findPiece(side SideType, piece PieceType) Postion {
+func (g *Game) findPieces(side SideType, piece PieceType) []Postion {
 	sidePieces := g.getPiecesForSide(side)
+	result := []Postion{}
 	for _, val := range sidePieces {
 		if g.getAt(val).Kind == piece {
-			return val
+			result = append(result, val)
 		}
 	}
 
-	return Postion{}
+	return result
 }
 
 func (g *Game) getPiecesForSide(side SideType) []Postion {
@@ -601,7 +662,7 @@ func (g *Game) getPiecesForSide(side SideType) []Postion {
 }
 
 func (g *Game) sideInCheck(side SideType) error {
-	kingPos := g.findPiece(side, PieceTypeKing)
+	kingPos := g.findPieces(side, PieceTypeKing)[1]
 	other := g.getPiecesForSide(g.getAt(kingPos).Side.other())
 
 	for _, val := range other {

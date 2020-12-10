@@ -284,7 +284,7 @@ func getMovesCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	msg := fmt.Sprintf(
 		"Match between <@!%s>: %s and <@!%s>: %s all moves:\n%v",
 		game.White.ID, game.White.Side.String(), game.Black.ID,
-		game.Black.Side.String(), game.MovesAtomicNotation(),
+		game.Black.Side.String(), game.AlgebraicNotation(),
 	)
 	s.ChannelMessageSendComplex(
 		m.ChannelID,
@@ -578,7 +578,7 @@ func main() {
 		return
 	}
 
-	discord.UpdateStatus(-1, "\"$cb help\"")
+	discord.UpdateStatus(-1, "\"-cb help\"")
 
 	// Wait here until CTRL-C or other term signal is received.
 	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
