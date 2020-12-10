@@ -527,6 +527,11 @@ func validPawnMove(g *Game, mv Move) error {
 		return errors.New("pawns cannot move that far ahead")
 	}
 
+	if (pawn.Side == SideWhite && mv.To.Row >= mv.From.Row) ||
+		(pawn.Side == SideBlack && mv.To.Row <= mv.From.Row) {
+		return errors.New("pawns cannot take one step back")
+	}
+
 	return nil
 }
 
