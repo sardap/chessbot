@@ -15,6 +15,7 @@ import (
 	"github.com/icza/gox/imagex/colorx"
 	"github.com/sardap/chessbot/chess"
 	"github.com/sardap/chessbot/db"
+	"github.com/sardap/chessbot/env"
 	"github.com/sardap/discom"
 )
 
@@ -43,7 +44,7 @@ var (
 )
 
 func init() {
-	commandSet = discom.CreateCommandSet(regexp.MustCompile("\\$cb"))
+	commandSet = discom.CreateCommandSet(regexp.MustCompile(env.CmdPrefix))
 
 	err := commandSet.AddCommand(discom.Command{
 		Re: regexp.MustCompile(infoPattern), Handler: infoCmd,
@@ -149,7 +150,7 @@ func sendGame(s *discordgo.Session, channelID, msg string, game *chess.Game) {
 		channelID,
 		&discordgo.MessageSend{
 			Content: msg,
-			Files: []*discordgo.File{&discordgo.File{
+			Files: []*discordgo.File{{
 				Name:   fmt.Sprintf("%s.png", game.ID()),
 				Reader: game.CreateImage(),
 			}},
@@ -289,7 +290,7 @@ func getMovesCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		m.ChannelID,
 		&discordgo.MessageSend{
 			Content: msg,
-			Files: []*discordgo.File{&discordgo.File{
+			Files: []*discordgo.File{{
 				Name: fmt.Sprintf("%s.gif", game.ID()), ContentType: "gif",
 				Reader: game.CreateGif(),
 			}},
@@ -543,7 +544,7 @@ func resginCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		m.ChannelID,
 		&discordgo.MessageSend{
 			Content: msg,
-			Files: []*discordgo.File{&discordgo.File{
+			Files: []*discordgo.File{{
 				Name: fmt.Sprintf("%s.gif", game.ID()), ContentType: "gif",
 				Reader: game.CreateGif(),
 			}},
@@ -555,7 +556,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func main() {
-	fmt.Printf("Connecting to DB")
+	fmt.Printf("Connecting to DB\n")
 	dbIns = &db.Instance{}
 	dbIns.Connect()
 

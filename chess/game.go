@@ -10,6 +10,7 @@ import (
 	"image/gif"
 	"image/png"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -22,8 +23,11 @@ const (
 	rowHight = 8
 )
 
+type validMove func(g *Game, mv Move) error
+
 var (
-	images     map[PieceType]image.Image = make(map[PieceType]image.Image)
+	images     = make(map[PieceType]image.Image)
+	moves      = make(map[PieceType]validMove)
 	boardImg   image.Image
 	emptyBoard [rowHight][rowWidth]Piece
 	green      = color.RGBA{0, 255, 0, 255}
@@ -31,6 +35,15 @@ var (
 )
 
 func init() {
+	moves = map[PieceType]validMove{
+		PieceTypePawn:   validPawnMove,
+		PieceTypeKnight: validHorsieMove,
+		PieceTypeBishop: validBishopMove,
+		PieceTypeRook:   validRookMove,
+		PieceTypeQueen:  validQueenMove,
+		PieceTypeKing:   validKingMove,
+	}
+
 	// Loads assets
 	boardImg = loadImage("assets/chess_board.png")
 
@@ -121,6 +134,25 @@ const (
 	PieceTypeKing
 )
 
+func (p PieceType) String() string {
+	switch p {
+	case PieceTypePawn:
+		return "pawn"
+	case PieceTypeKnight:
+		return "knight"
+	case PieceTypeBishop:
+		return "bishop"
+	case PieceTypeRook:
+		return "rook"
+	case PieceTypeQueen:
+		return "queen"
+	case PieceTypeKing:
+		return "king"
+	default:
+		return "comrade"
+	}
+}
+
 //SideType SideType
 type SideType int
 
@@ -133,6 +165,17 @@ func (s SideType) String() string {
 	}
 
 	return "ERROR"
+}
+
+func (s SideType) other() SideType {
+	switch s {
+	case SideWhite:
+		return SideBlack
+	case SideBlack:
+		return SideWhite
+	}
+
+	return SideEmpty
 }
 
 const (
@@ -163,14 +206,14 @@ type Player struct {
 
 //Postion Postion
 type Postion struct {
-	Y int `json:"c"`
-	X int `json:"r"`
+	Row int `json:"c"`
+	Col int `json:"r"`
 }
 
 func (p *Postion) String() string {
 	return fmt.Sprintf(
 		"%s%d",
-		string(p.X+int('A')), 8-p.Y,
+		string(p.Col+int('A')), 8-p.Row,
 	)
 }
 
@@ -207,13 +250,13 @@ func (g *Game) ID() string {
 }
 
 func (g *Game) processMove(move Move) {
-	tmp := g.board[move.From.Y][move.From.X]
-	g.board[move.From.Y][move.From.X] = Piece{PieceTypeEmpty, SideEmpty}
-	g.board[move.To.Y][move.To.X] = tmp
+	tmp := g.board[move.From.Row][move.From.Col]
+	g.board[move.From.Row][move.From.Col] = Piece{PieceTypeEmpty, SideEmpty}
+	g.board[move.To.Row][move.To.Col] = tmp
 	//Apply promotion
 	if move.Promotion != PieceTypeEmpty {
-		g.board[move.To.Y][move.To.X] = Piece{
-			move.Promotion, g.board[move.To.Y][move.To.X].Side,
+		g.board[move.To.Row][move.To.Col] = Piece{
+			move.Promotion, g.board[move.To.Row][move.To.Col].Side,
 		}
 	}
 }
@@ -375,36 +418,232 @@ func (g *Game) GetOpponent(id string) Player {
 }
 
 func (g *Game) getAt(pos Postion) Piece {
-	return g.board[pos.Y][pos.X]
+	return g.board[pos.Row][pos.Col]
 }
 
 func (g *Game) diagonalMove(mv Move) bool {
-	return mv.To.X != mv.From.X && mv.To.Y != mv.From.Y
+	return mv.To.Col != mv.From.Col && mv.To.Row != mv.From.Row
 }
 
-func (g *Game) validPawnMove(mv Move) error {
+func (g *Game) checkRoute(mv Move) error {
+	step := func() {
+		if mv.From.Col > mv.To.Col {
+			mv.From.Col--
+		}
 
-	if mv.From.X != mv.To.X {
-		return errors.New("cannot move the other players pieces")
+		if mv.From.Col < mv.To.Col {
+			mv.From.Col++
+		}
+
+		if mv.From.Row > mv.To.Row {
+			mv.From.Row--
+		}
+
+		if mv.From.Row < mv.To.Row {
+			mv.From.Row++
+		}
+	}
+
+	step()
+	loops := 0
+	for loops < 256 && (mv.From.Col != mv.To.Col || mv.From.Row != mv.To.Row) {
+		if g.getAt(mv.From).Kind != PieceTypeEmpty {
+			return errors.Errorf("piece in the way of %s movement", g.getAt(mv.From).Kind.String())
+		}
+
+		loops++
+		step()
 	}
 
 	return nil
 }
 
-//ValidMove move
+func (g *Game) checkBlockingStraight(mv Move) error {
+	colD := math.Abs(float64(mv.To.Col - mv.From.Col))
+	rowD := math.Abs(float64(mv.To.Row - mv.From.Row))
+
+	if rowD != 0 && colD != 0 {
+		return errors.Errorf("Cannot move %s dialoginly", g.getAt(mv.From).Kind.String())
+	}
+
+	//Don't need to check for one space moves
+	if colD <= 1 && rowD <= 1 {
+		return nil
+	}
+
+	return g.checkRoute(mv)
+}
+
+func (g *Game) checkBlockingDiagonal(mv Move) error {
+	colD := math.Abs(float64(mv.To.Col - mv.From.Col))
+	rowD := math.Abs(float64(mv.To.Row - mv.From.Row))
+
+	if rowD == 0 || colD == 0 {
+		return errors.Errorf("Cannot move %s straight", g.getAt(mv.From).Kind.String())
+	}
+
+	if rowD != colD {
+		return errors.Errorf("illegal movement cell for %s", g.getAt(mv.From).Kind.String())
+	}
+
+	//Don't need to check for one space moves
+	if colD <= 1 && rowD <= 1 {
+		return nil
+	}
+
+	return g.checkRoute(mv)
+}
+
+func validPawnMove(g *Game, mv Move) error {
+	pawn := g.getAt(mv.From)
+	target := g.getAt(mv.To)
+
+	if err := g.checkBlockingStraight(mv); err != nil {
+		return err
+	}
+
+	moveColD := math.Abs(float64(mv.To.Col - mv.From.Col))
+
+	// Taking another piece
+	if target.Kind == PieceTypeEmpty && mv.From.Col != mv.To.Col && moveColD > 1 {
+		return errors.New("pawns cannot move diagonally without taking a piece")
+	}
+
+	moveD := math.Abs(float64(mv.To.Row - mv.From.Row))
+	if moveD <= 0 {
+		return errors.New("pawns cannot move backwards or to the same cell")
+	}
+
+	var maxMovement float64
+	if pawn.Side == SideWhite && mv.From.Row == 6 ||
+		pawn.Side == SideBlack && mv.From.Row == 1 {
+		maxMovement = 2
+	} else {
+		maxMovement = 1
+	}
+
+	//Moving forward
+	if moveD > maxMovement {
+		return errors.New("pawns cannot move that far ahead")
+	}
+
+	return nil
+}
+
+func validBishopMove(g *Game, mv Move) error {
+	return g.checkBlockingDiagonal(mv)
+}
+
+func validHorsieMove(g *Game, mv Move) error {
+	colMoveD := math.Abs(float64(mv.To.Col - mv.From.Col))
+	rowMoveD := math.Abs(float64(mv.To.Row - mv.From.Row))
+
+	if colMoveD == 1 && rowMoveD == 2 || colMoveD == 2 && rowMoveD == 1 {
+		return nil
+	}
+
+	return errors.New("invalid knight move")
+}
+
+func validRookMove(g *Game, mv Move) error {
+	return g.checkBlockingStraight(mv)
+}
+
+func validQueenMove(g *Game, mv Move) error {
+	straightErr := g.checkBlockingStraight(mv)
+	diagonalErr := g.checkBlockingDiagonal(mv)
+
+	if straightErr != nil && diagonalErr != nil {
+		return errors.New("queen cannot move to that postion")
+	}
+
+	return nil
+}
+
+func validKingMove(g *Game, mv Move) error {
+	colMoveD := math.Abs(float64(mv.To.Col - mv.From.Col))
+	rowMoveD := math.Abs(float64(mv.To.Row - mv.From.Row))
+
+	if colMoveD > 1 || rowMoveD > 1 {
+		return errors.New("king cannot move more then one cell")
+	}
+
+	return nil
+}
+
+func (g *Game) findPiece(side SideType, piece PieceType) Postion {
+	sidePieces := g.getPiecesForSide(side)
+	for _, val := range sidePieces {
+		if g.getAt(val).Kind == piece {
+			return val
+		}
+	}
+
+	return Postion{}
+}
+
+func (g *Game) getPiecesForSide(side SideType) []Postion {
+	results := make([]Postion, 0)
+	for r := 0; r < rowWidth; r++ {
+		for c := 0; c < rowHight; c++ {
+			postion := Postion{Row: r, Col: c}
+			if g.getAt(postion).Side == side {
+				results = append(results, postion)
+			}
+		}
+	}
+	return results
+}
+
+func (g *Game) sideInCheck(side SideType) error {
+	kingPos := g.findPiece(side, PieceTypeKing)
+	other := g.getPiecesForSide(g.getAt(kingPos).Side.other())
+
+	for _, val := range other {
+		err := moves[g.getAt(val).Kind](g, Move{
+			From: val,
+			To:   kingPos,
+		})
+		if err == nil {
+			return errors.Errorf("%s king is in check after move", side.String())
+		}
+	}
+
+	return nil
+}
+
+//ValidMove returns an error if the move is not valid
 func (g *Game) ValidMove(id string, mv Move) error {
 	if g.GetPlayer(id).Side != g.Turn {
 		return errors.New("cannot move on enemies turn")
 	}
 
-	piece := g.board[mv.From.Y][mv.From.X]
+	piece := g.board[mv.From.Row][mv.From.Col]
 	if piece.Side != g.GetPlayer(id).Side {
 		return errors.New("cannot move the other players pieces")
 	}
 
-	switch piece.Kind {
-	case PieceTypePawn:
-		return nil
+	target := g.getAt(mv.To)
+
+	if target.Side == piece.Side {
+		return errors.New("cannot kill a comrade with a move")
+	}
+
+	if err := moves[piece.Kind](g, mv); err != nil {
+		return err
+	}
+
+	//Make move check if king is in check
+	g.MakeMove(mv)
+	defer func(g *Game) {
+		//Remove added move and undo move
+		g.Moves = g.Moves[0 : len(g.Moves)-1]
+		g.board = emptyBoard
+		g.ProcessMoves()
+	}(g)
+
+	if err := g.sideInCheck(g.Turn); err != nil {
+		return err
 	}
 
 	return nil
@@ -443,8 +682,8 @@ func StringToPostion(from string) Postion {
 	x := int(number - '0')
 
 	return Postion{
-		Y: 8 - x,
-		X: y,
+		Row: 8 - x,
+		Col: y,
 	}
 }
 

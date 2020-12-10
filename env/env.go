@@ -17,6 +17,8 @@ var (
 	RedisPassword string
 	//RedisDB redisDB
 	RedisDB int
+	//CmdPrefix the command prefix
+	CmdPrefix string
 )
 
 func init() {
@@ -37,4 +39,6 @@ func init() {
 	if err != nil {
 		panic(errors.Wrap(err, "Error reading REDIS_DB"))
 	}
+
+	CmdPrefix = os.Getenv("CMD_PREFIX")
 }
