@@ -429,6 +429,10 @@ func (g *Game) AlgebraicNotation() string {
 		//Checks if another piece of the same type can also make the move
 		disambiguating := ""
 		for _, val := range pieces {
+			if val == mv.From {
+				continue
+			}
+
 			err := moves[g.getAt(val).Kind](g, Move{
 				From: val, To: mv.To,
 			})
@@ -444,7 +448,7 @@ func (g *Game) AlgebraicNotation() string {
 		}
 
 		fmt.Fprintf(
-			&result, "%s%s%s%s",
+			&result, "%s%s%s%s ",
 			moving.Kind.NotationStr(), disambiguating, take, postion,
 		)
 		if i != 0 && i%3 == 0 {
@@ -662,7 +666,7 @@ func (g *Game) getPiecesForSide(side SideType) []Postion {
 }
 
 func (g *Game) sideInCheck(side SideType) error {
-	kingPos := g.findPieces(side, PieceTypeKing)[1]
+	kingPos := g.findPieces(side, PieceTypeKing)[0]
 	other := g.getPiecesForSide(g.getAt(kingPos).Side.other())
 
 	for _, val := range other {
@@ -680,14 +684,14 @@ func (g *Game) sideInCheck(side SideType) error {
 
 //ValidMove returns an error if the move is not valid
 func (g *Game) ValidMove(id string, mv Move) error {
-	if g.GetPlayer(id).Side != g.Turn {
-		return errors.New("cannot move on enemies turn")
-	}
+	// if g.GetPlayer(id).Side != g.Turn {
+	// 	return errors.New("cannot move on enemies turn")
+	// }
 
 	piece := g.board[mv.From.Row][mv.From.Col]
-	if piece.Side != g.GetPlayer(id).Side {
-		return errors.New("cannot move the other players pieces")
-	}
+	// if piece.Side != g.GetPlayer(id).Side {
+	// 	return errors.New("cannot move the other players pieces")
+	// }
 
 	target := g.getAt(mv.To)
 

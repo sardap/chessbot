@@ -13,7 +13,17 @@ Just run go build or build the docker image
 Refer to env/env.go to see what env vars you need set
 
 ## Using
-`cb help` will print out all commands regex's (gross)
-`cb start {@TARGET_PLAYER_HERE}` will start a new game with a player
-`cb move {@TARGET_PLAYER_HERE} {FROM} {TO}` will move piece from coordinate to coordinate
-`cb resign {@TARGET_PLAYER_HERE}` will concede a game 
+Following is a list of commands
+
+`-cb help` will print out all commands regex's (gross)
+
+`-cb {@TARGET_PLAYER_HERE} start` will start a new game with a player
+
+`-cb {@TARGET_PLAYER_HERE} move {FROM} {TO}` will move piece from 
+coordinate to coordinate
+`-cb {@TARGET_PLAYER_HERE} resign` will concede a game 
+
+`-cb {@TARGET_PLAYER_HERE} get moves` will create a gif of the match 
+so far along with the move list in algebraic notation gif shown below.
+
+![screenshot](examples/example.gif)
