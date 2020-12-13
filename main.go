@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"image/color"
 	"log"
@@ -328,6 +329,18 @@ func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	if err := game.ValidMove(m.Author.ID, mv); err != nil {
+		if errors.Is(err, chess.ErrCheckMate) {
+			var side chess.SideType
+			//This is shit
+			if strings.Contains(strings.ToLower(err.Error()), "white") {
+				side = chess.SideWhite
+			} else {
+				side = chess.SideBlack
+			}
+			resgin(s, m, target, side)
+			return
+		}
+
 		s.ChannelMessageSend(
 			m.ChannelID,
 			fmt.Sprintf(
@@ -523,7 +536,17 @@ func resginCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	game.Winner = game.GetOpponent(m.Author.ID).Side
+	resgin(s, m, target, game.GetOpponent(m.Author.ID).Side)
+}
+
+func resgin(s *discordgo.Session, m *discordgo.MessageCreate, target string, winner chess.SideType) {
+	game, err := getGame(m, target)
+	if err != nil {
+		printMissingGame(s, m)
+		return
+	}
+
+	game.Winner = winner
 
 	err = dbIns.DeleteGame(game)
 	if err != nil {
@@ -534,11 +557,18 @@ func resginCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 	go dbIns.ArchiveGame(game)
 
+	var winID string
+	if game.Winner == chess.SideWhite {
+		winID = game.White.ID
+	} else {
+		winID = game.Black.ID
+	}
+
 	msg := fmt.Sprintf(
 		"Match between <@!%s>: %s and <@!%s>: %s Final State\n"+
 			"🎉Winner🎉 <@!%s>",
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
-		game.GetOpponent(m.Author.ID).ID,
+		winID,
 	)
 	s.ChannelMessageSendComplex(
 		m.ChannelID,

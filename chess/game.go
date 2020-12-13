@@ -26,12 +26,15 @@ const (
 type validMove func(g *Game, mv Move) error
 
 var (
-	images     = make(map[PieceType]image.Image)
-	moves      = make(map[PieceType]validMove)
-	boardImg   image.Image
-	emptyBoard [rowHight][rowWidth]Piece
-	green      = color.RGBA{0, 255, 0, 255}
-	purple     = color.RGBA{255, 0, 255, 255}
+	//ErrCheckMate error when the player is checked mated
+	ErrCheckMate = errors.New("checked mate")
+	images       = make(map[PieceType]image.Image)
+	moves        = make(map[PieceType]validMove)
+	boardImg     image.Image
+	emptyBoard   [rowHight][rowWidth]Piece
+	green        = color.RGBA{0, 255, 0, 255}
+	purple       = color.RGBA{255, 0, 255, 255}
+	postions     = make([]Postion, rowHight*rowWidth)
 )
 
 func init() {
@@ -76,6 +79,13 @@ func init() {
 	board[rowHight-1] = changeRowSide(coolPieceRow, SideWhite)
 
 	emptyBoard = board
+
+	for i := 0; i < len(postions); i++ {
+		postions[i] = Postion{
+			Row: i / rowHight,
+			Col: i % rowWidth,
+		}
+	}
 }
 
 func loadImage(path string) image.Image {
@@ -157,7 +167,7 @@ func (p PieceType) String() string {
 func (p PieceType) NotationStr() string {
 	switch p {
 	case PieceTypePawn:
-		return "P"
+		return ""
 	case PieceTypeKnight:
 		return "K"
 	case PieceTypeBishop:
@@ -238,7 +248,7 @@ func (p *Postion) String() string {
 }
 
 func colStr(c int) string {
-	return fmt.Sprintf("%s", c+int('A'))
+	return fmt.Sprintf("%s", string(c+int('A')))
 }
 
 func rankStr(r int) string {
@@ -433,7 +443,7 @@ func (g *Game) AlgebraicNotation() string {
 				continue
 			}
 
-			err := moves[g.getAt(val).Kind](g, Move{
+			err := g.validMoveForPiece(Move{
 				From: val, To: mv.To,
 			})
 			if err == nil {
@@ -558,42 +568,56 @@ func (g *Game) checkBlockingDiagonal(mv Move) error {
 	return g.checkRoute(mv)
 }
 
-func validPawnMove(g *Game, mv Move) error {
-	pawn := g.getAt(mv.From)
+func (g *Game) validMoveForPiece(mv Move) error {
+	source := g.getAt(mv.From)
 	target := g.getAt(mv.To)
 
-	if err := g.checkBlockingStraight(mv); err != nil {
-		return err
+	if source.Side == target.Side {
+		return errors.New("cannot kill a comrade with a move")
 	}
 
-	moveColD := math.Abs(float64(mv.To.Col - mv.From.Col))
+	return moves[source.Kind](g, mv)
+}
 
-	// Taking another piece
-	if target.Kind == PieceTypeEmpty && mv.From.Col != mv.To.Col && moveColD > 1 {
-		return errors.New("pawns cannot move diagonally without taking a piece")
+func validPawnMove(g *Game, mv Move) error {
+	pawn := g.getAt(mv.From)
+
+	//Check moving backwards
+	if (pawn.Side == SideWhite && mv.To.Row >= mv.From.Row) ||
+		(pawn.Side == SideBlack && mv.To.Row <= mv.From.Row) {
+		return errors.New("pawns cannot take one step back")
 	}
 
-	moveD := math.Abs(float64(mv.To.Row - mv.From.Row))
-	if moveD <= 0 {
-		return errors.New("pawns cannot move backwards or to the same cell")
-	}
+	target := g.getAt(mv.To)
 
+	//Pawn Moving forward
 	var maxMovement float64
 	if pawn.Side == SideWhite && mv.From.Row == 6 ||
 		pawn.Side == SideBlack && mv.From.Row == 1 {
+		//Starting Rank
 		maxMovement = 2
 	} else {
 		maxMovement = 1
 	}
 
-	//Moving forward
-	if moveD > maxMovement {
+	if moveRowD := math.Abs(float64(mv.To.Row - mv.From.Row)); moveRowD > maxMovement {
 		return errors.New("pawns cannot move that far ahead")
 	}
 
-	if (pawn.Side == SideWhite && mv.To.Row >= mv.From.Row) ||
-		(pawn.Side == SideBlack && mv.To.Row <= mv.From.Row) {
-		return errors.New("pawns cannot take one step back")
+	moveColD := math.Abs(float64(mv.To.Col - mv.From.Col))
+
+	//Target is a enemy
+	if target.Side == pawn.Side.other() {
+		if moveColD != 1 {
+			return errors.New("pawns cannot move diagonally without taking a piece")
+		}
+
+		return nil
+	}
+
+	//Checks if anyone is in the way
+	if err := g.checkBlockingStraight(mv); err != nil {
+		return err
 	}
 
 	return nil
@@ -666,20 +690,78 @@ func (g *Game) getPiecesForSide(side SideType) []Postion {
 }
 
 func (g *Game) sideInCheck(side SideType) error {
-	kingPos := g.findPieces(side, PieceTypeKing)[0]
+	kings := g.findPieces(side, PieceTypeKing)
+	if len(kings) < 1 {
+		return errors.Errorf("cannot find king")
+	}
+
+	kingPos := kings[0]
 	other := g.getPiecesForSide(g.getAt(kingPos).Side.other())
 
 	for _, val := range other {
-		err := moves[g.getAt(val).Kind](g, Move{
+		piece := g.getAt(val)
+		err := g.validMoveForPiece(Move{
 			From: val,
 			To:   kingPos,
 		})
 		if err == nil {
-			return errors.Errorf("%s king is in check after move", side.String())
+			return errors.Errorf(
+				"%s king is in check after move from %s: %s%s",
+				side.String(), piece.Kind.String(),
+				colStr(val.Col), rankStr(val.Row),
+			)
 		}
 	}
 
 	return nil
+}
+
+func (g *Game) movesIntoCheck(side SideType, mv Move) error {
+	//Make move check if king is in check
+	g.MakeMove(mv)
+	defer func(g *Game) {
+		//Remove added move and undo move
+		g.Moves = g.Moves[0 : len(g.Moves)-1]
+		g.board = emptyBoard
+		g.ProcessMoves()
+	}(g)
+
+	if err := g.sideInCheck(side); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (g *Game) sideInCheckMate(side SideType, mv Move) error {
+	//Make move check if king is in check
+	g.MakeMove(mv)
+	defer func(g *Game) {
+		//Remove added move and undo move
+		g.Moves = g.Moves[0 : len(g.Moves)-1]
+		g.board = emptyBoard
+		g.ProcessMoves()
+	}(g)
+
+	pieces := g.getPiecesForSide(side)
+	for _, val := range pieces {
+		for _, to := range postions {
+			mv := Move{
+				From: val,
+				To:   to,
+			}
+
+			if err := g.validMoveForPiece(mv); err != nil {
+				continue
+			}
+
+			if err := g.movesIntoCheck(side, mv); err == nil {
+				return nil
+			}
+		}
+	}
+
+	return errors.Wrapf(ErrCheckMate, "player: %s", side.String())
 }
 
 //ValidMove returns an error if the move is not valid
@@ -693,26 +775,15 @@ func (g *Game) ValidMove(id string, mv Move) error {
 	// 	return errors.New("cannot move the other players pieces")
 	// }
 
-	target := g.getAt(mv.To)
-
-	if target.Side == piece.Side {
-		return errors.New("cannot kill a comrade with a move")
-	}
-
-	if err := moves[piece.Kind](g, mv); err != nil {
+	if err := g.validMoveForPiece(mv); err != nil {
 		return err
 	}
 
-	//Make move check if king is in check
-	g.MakeMove(mv)
-	defer func(g *Game) {
-		//Remove added move and undo move
-		g.Moves = g.Moves[0 : len(g.Moves)-1]
-		g.board = emptyBoard
-		g.ProcessMoves()
-	}(g)
+	if err := g.movesIntoCheck(piece.Side, mv); err != nil {
+		return err
+	}
 
-	if err := g.sideInCheck(g.Turn); err != nil {
+	if err := g.sideInCheckMate(piece.Side.other(), mv); err != nil {
 		return err
 	}
 
@@ -736,12 +807,11 @@ func (g *Game) FindEmptySqaure() Postion {
 func (g *Game) MakeMove(mv Move) {
 	g.Moves = append(g.Moves, mv)
 	g.processMove(mv)
+}
 
-	if g.Turn == SideWhite {
-		g.Turn = SideBlack
-	} else {
-		g.Turn = SideWhite
-	}
+//NextTurn next turn
+func (g *Game) NextTurn() {
+	g.Turn = g.Turn.other()
 }
 
 //StringToPostion StringToPostion
