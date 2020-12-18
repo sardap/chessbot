@@ -22,14 +22,14 @@ import (
 
 const infoPattern = "info$"
 const codeInfoPattern = "code info$"
-const startGamePattern = "<@!(?P<target>\\d{18})> .*?start ?((?P<white_color>#[0-9a-f]{6}) ?(?P<black_color>#[0-9a-f]{6}))? ?$"
-const getGamePattern = "<@!(?P<target>\\d{18})> .*?get$"
-const getMovesPattern = "<@!(?P<target>\\d{18})> .*?get .*?moves?$"
-const movePattern = "<@!(?P<target>\\d{18})> .*?move .*?([a-h][1-8]) .*?([a-h][1-8]) ?$"
-const castlingPattern = "<@!(?P<target>\\d{18})> .*?castling .*?([a-h][1-8]) .*?([a-h][1-8]) ([a-h][1-8]) ([a-h][1-8]) ?$"
-const enPassantPattern = "<@!(?P<target>\\d{18})> .*?en .*?passant .*?([a-h][1-8]) ?$"
-const promotionPattern = "<@!(?P<target>\\d{18})> .*?move .*?promotion .*?([a-h][1-8]) .*?([a-h][1-8]) (rook|knight|queen|bishop) ?$"
-const resginPattern = "<@!(?P<target>\\d{18})> .*?(resign|resgin)$"
+const startGamePattern = "(<@!(?P<target>\\d{18})>)? ?.*?start ?((?P<white_color>#[0-9a-f]{6}) ?(?P<black_color>#[0-9a-f]{6}))? ?$"
+const getGamePattern = "(<@!(?P<target>\\d{18})>)? .*?get$"
+const getMovesPattern = "(<@!(?P<target>\\d{18})>)? .*?get .*?moves?$"
+const movePattern = "(<@!(?P<target>\\d{18})>)? .*?move .*?(?P<move_from>[a-h][1-8]) .*?(?P<move_to>[a-h][1-8]) ?$"
+const castlingPattern = "(<@!(?P<target>\\d{18})>)? .*?castling .*?(?P<move_from_a>[a-h][1-8]) .*?(?P<move_to>[a-h][1-8]) (?P<move_from_b>[a-h][1-8]) (?P<move_to_b>[a-h][1-8]) ?$"
+const enPassantPattern = "(<@!(?P<target>\\d{18})>)? .*?en .*?passant .*?(?P<passanted>[a-h][1-8]) ?$"
+const promotionPattern = "(<@!(?P<target>\\d{18})>)? .*?move .*?promotion .*?(?P<move_from>[a-h][1-8]) .*?(?P<move_to>[a-h][1-8]) (?P<piece>rook|knight|queen|bishop) ?$"
+const resginPattern = "(<@!(?P<target>\\d{18})>)? .*?(resign|resgin)$"
 
 var (
 	commandSet  *discom.CommandSet
@@ -146,6 +146,19 @@ func init() {
 	}
 }
 
+func getMatches(str string, exp *regexp.Regexp) map[string]string {
+	result := make(map[string]string)
+
+	match := exp.FindStringSubmatch(str)
+	for i, name := range exp.SubexpNames() {
+		if i != 0 && name != "" {
+			result[name] = match[i]
+		}
+	}
+
+	return result
+}
+
 func sendGame(s *discordgo.Session, channelID, msg string, game *chess.Game) {
 	s.ChannelMessageSendComplex(
 		channelID,
@@ -182,9 +195,8 @@ func codeInfoCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func startGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := startGameRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
-
-	target := matches[0][1]
+	matches := getMatches(strings.ToLower(m.Content), startGameRe)
+	target := matches["target"]
 
 	if target == m.Author.ID {
 		s.ChannelMessageSend(
@@ -218,9 +230,9 @@ func startGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	var whiteColor, blackColor color.RGBA
-	if matches[0][3] != "" {
-		whiteColor, _ = colorx.ParseHexColor(matches[0][3])
-		blackColor, _ = colorx.ParseHexColor(matches[0][4])
+	if val := matches["white_color"]; val != "" {
+		whiteColor, _ = colorx.ParseHexColor(matches["white_color"])
+		blackColor, _ = colorx.ParseHexColor(matches["black_color"])
 	} else {
 		whiteColor = color.RGBA{255, 255, 255, 255}
 		blackColor = color.RGBA{0, 0, 0, 255}
@@ -233,7 +245,15 @@ func startGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		"New Match Between <@!%s>: %s and <@!%s>: %s",
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
 	)
-	sendGame(s, m.ChannelID, msg, &game)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
+	sendGame(s, channel, msg, &game)
 }
 
 func printMissingGame(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -244,7 +264,15 @@ func printMissingGame(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func getGame(m *discordgo.MessageCreate, target string) (*chess.Game, error) {
-	return dbIns.GetGame(chess.GameID(m.GuildID, m.Author.ID, target))
+	var guildID string
+	if m.GuildID != "" {
+		guildID = m.GuildID
+	} else {
+		//Direct message
+		guildID = ""
+	}
+	id := chess.GameID(guildID, m.Author.ID, target)
+	return dbIns.GetGame(id)
 }
 
 func rgbaToString(color color.RGBA) string {
@@ -252,9 +280,8 @@ func rgbaToString(color color.RGBA) string {
 }
 
 func getGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := getGameRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
-
-	target := matches[0][1]
+	matches := getMatches(strings.ToLower(m.Content), getGameRe)
+	target := matches["target"]
 
 	game, err := getGame(m, target)
 	if err != nil {
@@ -268,13 +295,20 @@ func getGameCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
 		rgbaToString(game.White.Color), rgbaToString(game.Black.Color),
 	)
-	sendGame(s, m.ChannelID, msg, game)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
+	sendGame(s, channel, msg, game)
 }
 
 func getMovesCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := getMovesRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
-
-	target := matches[0][1]
+	matches := getMatches(strings.ToLower(m.Content), getMovesRe)
+	target := matches["target"]
 
 	game, err := getGame(m, target)
 	if err != nil {
@@ -287,8 +321,16 @@ func getMovesCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		game.White.ID, game.White.Side.String(), game.Black.ID,
 		game.Black.Side.String(), game.AlgebraicNotation(),
 	)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
 	s.ChannelMessageSendComplex(
-		m.ChannelID,
+		channel,
 		&discordgo.MessageSend{
 			Content: msg,
 			Files: []*discordgo.File{{
@@ -300,7 +342,8 @@ func getMovesCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := moveRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
+	matches := getMatches(strings.ToLower(m.Content), moveRe)
+	target := matches["target"]
 
 	if matches == nil {
 		s.ChannelMessageSend(
@@ -313,9 +356,8 @@ func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	target := matches[0][1]
-	from := matches[0][2]
-	to := matches[0][3]
+	from := matches["move_from"]
+	to := matches["move_to"]
 
 	game, err := getGame(m, target)
 	if err != nil {
@@ -333,10 +375,12 @@ func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 			var side chess.SideType
 			//This is shit
 			if strings.Contains(strings.ToLower(err.Error()), "white") {
-				side = chess.SideWhite
-			} else {
 				side = chess.SideBlack
+			} else {
+				side = chess.SideWhite
 			}
+			game.MakeMove(mv)
+			dbIns.SaveGame(game)
 			resgin(s, m, target, side)
 			return
 		}
@@ -356,14 +400,24 @@ func moveCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 	dbIns.SaveGame(game)
 
 	msg := fmt.Sprintf(
-		"Match between <@!%s>: %s and <@!%s>: %s Move %s to %s",
-		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(), from, to,
+		"Match between <@!%s>: %s and <@!%s>: %s\nMove %s to %s",
+		game.White.ID, game.White.Side.String(), game.Black.ID,
+		game.Black.Side.String(), from, to,
 	)
-	sendGame(s, m.ChannelID, msg, game)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
+	sendGame(s, channel, msg, game)
 }
 
 func castlingCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := castlingRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
+	matches := getMatches(strings.ToLower(m.Content), castlingRe)
+	target := matches["target"]
 
 	if matches == nil {
 		s.ChannelMessageSend(
@@ -376,12 +430,11 @@ func castlingCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	target := matches[0][1]
-	aFrom := matches[0][2]
-	aTo := matches[0][3]
+	aFrom := matches["move_from_a"]
+	aTo := matches["move_to_a"]
 
-	bFrom := matches[0][4]
-	bTo := matches[0][5]
+	bFrom := matches["move_from_b"]
+	bTo := matches["move_to_b"]
 
 	game, err := getGame(m, target)
 	if err != nil {
@@ -417,11 +470,20 @@ func castlingCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		"Match between <@!%s>: %s and <@!%s>: %s castling move",
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
 	)
-	sendGame(s, m.ChannelID, msg, game)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
+	sendGame(s, channel, msg, game)
 }
 
 func enPassantCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := enPassantRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
+	matches := getMatches(strings.ToLower(m.Content), enPassantRe)
+	target := matches["target"]
 
 	if matches == nil {
 		s.ChannelMessageSend(
@@ -434,10 +496,9 @@ func enPassantCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	playerTarget := matches[0][1]
-	pieceTarget := matches[0][2]
+	pieceTarget := matches["passanted"]
 
-	game, err := getGame(m, playerTarget)
+	game, err := getGame(m, target)
 	if err != nil {
 		printMissingGame(s, m)
 		return
@@ -456,11 +517,20 @@ func enPassantCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		"Match between <@!%s>: %s and <@!%s>: %s En Passant",
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
 	)
-	sendGame(s, m.ChannelID, msg, game)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
+	sendGame(s, channel, msg, game)
 }
 
 func movePromotionCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := promotionRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
+	matches := getMatches(strings.ToLower(m.Content), promotionRe)
+	target := matches["target"]
 
 	if matches == nil {
 		s.ChannelMessageSend(
@@ -473,10 +543,9 @@ func movePromotionCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	target := matches[0][1]
-	from := matches[0][2]
-	to := matches[0][3]
-	promo := matches[0][4]
+	from := matches["move_from"]
+	to := matches["move_to"]
+	promo := matches["piece"]
 
 	var promotion chess.PieceType
 
@@ -521,14 +590,21 @@ func movePromotionCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 		"Match between <@!%s>: %s and <@!%s>: %s En Passant",
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
 	)
-	sendGame(s, m.ChannelID, msg, game)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
+	sendGame(s, channel, msg, game)
 
 }
 
 func resginCmd(s *discordgo.Session, m *discordgo.MessageCreate) {
-	matches := resginRe.FindAllStringSubmatch(strings.ToLower(m.Content), -1)
-
-	target := matches[0][1]
+	matches := getMatches(strings.ToLower(m.Content), resginRe)
+	target := matches["target"]
 
 	game, err := getGame(m, target)
 	if err != nil {
@@ -570,8 +646,16 @@ func resgin(s *discordgo.Session, m *discordgo.MessageCreate, target string, win
 		game.White.ID, game.White.Side.String(), game.Black.ID, game.Black.Side.String(),
 		winID,
 	)
+	//Direct
+	var channel string
+	if target == "" {
+		ch, _ := s.UserChannelCreate(m.Author.ID)
+		channel = ch.ID
+	} else {
+		channel = m.ChannelID
+	}
 	s.ChannelMessageSendComplex(
-		m.ChannelID,
+		channel,
 		&discordgo.MessageSend{
 			Content: msg,
 			Files: []*discordgo.File{{

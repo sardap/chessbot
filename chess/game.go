@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"io"
 	"math"
+	"math/rand"
 	"os"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ import (
 const (
 	rowWidth = 8
 	rowHight = 8
+	aiID     = "MR_COMPUTER"
 )
 
 type validMove func(g *Game, mv Move) error
@@ -262,17 +264,22 @@ type Move struct {
 	Promotion PieceType `json:"promo"`
 }
 
+//BoardColor the colors for the board
+type BoardColor struct {
+	ColorWhite color.RGBA `json:"board_color_white"`
+	ColorBlack color.RGBA `json:"board_color_black"`
+}
+
 //Game a chess game
 type Game struct {
-	board           [rowHight][rowWidth]Piece
-	Moves           []Move     `json:"moves"`
-	White           Player     `json:"white"`
-	Black           Player     `json:"black"`
-	GuildID         string     `json:"gid"`
-	Turn            SideType   `json:"turn"`
-	Winner          SideType   `json:"win"`
-	BoardColorWhite color.RGBA `json:"board_color_white"`
-	BoardColorBlack color.RGBA `json:"board_color_black"`
+	board   [rowHight][rowWidth]Piece
+	Moves   []Move     `json:"moves"`
+	White   Player     `json:"white"`
+	Black   Player     `json:"black"`
+	GuildID string     `json:"gid"`
+	Turn    SideType   `json:"turn"`
+	Winner  SideType   `json:"win"`
+	Color   BoardColor `json:"color"`
 }
 
 //GameID Create game id
@@ -766,14 +773,14 @@ func (g *Game) sideInCheckMate(side SideType, mv Move) error {
 
 //ValidMove returns an error if the move is not valid
 func (g *Game) ValidMove(id string, mv Move) error {
-	// if g.GetPlayer(id).Side != g.Turn {
-	// 	return errors.New("cannot move on enemies turn")
-	// }
+	if g.GetPlayer(id).Side != g.Turn {
+		return errors.New("cannot move on enemies turn")
+	}
 
 	piece := g.board[mv.From.Row][mv.From.Col]
-	// if piece.Side != g.GetPlayer(id).Side {
-	// 	return errors.New("cannot move the other players pieces")
-	// }
+	if piece.Side != g.GetPlayer(id).Side {
+		return errors.New("cannot move the other players pieces")
+	}
 
 	if err := g.validMoveForPiece(mv); err != nil {
 		return err
@@ -848,13 +855,29 @@ func CreateGame(white, black, guildID string, whiteColor, BlackColor color.RGBA)
 			Side:  SideBlack,
 			Color: BlackColor,
 		},
-		GuildID:         guildID,
-		Turn:            SideWhite,
-		BoardColorBlack: color.RGBA{0, 0, 0, 255},
-		BoardColorWhite: color.RGBA{255, 255, 255, 255},
+		GuildID: guildID,
+		Turn:    SideWhite,
+		Color: BoardColor{
+			ColorWhite: color.RGBA{255, 255, 255, 255},
+			ColorBlack: color.RGBA{0, 0, 0, 255},
+		},
 	}
 
 	result.ProcessMoves()
 
 	return result
+}
+
+//CreateComputerGame creates a game vs a Computer
+func CreateComputerGame(playerID, guildID string, whiteColor, BlackColor color.RGBA) Game {
+	var white, black string
+	if rand.Float32() > 0.5 {
+		white = playerID
+		black = aiID
+	} else {
+		white = aiID
+		black = playerID
+	}
+
+	return CreateGame(white, black, guildID, whiteColor, BlackColor)
 }
